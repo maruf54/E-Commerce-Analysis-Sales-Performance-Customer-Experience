@@ -1,6 +1,4 @@
 -- 01_create_tables.sql
--- Creates the 8 tables for the Olist Brazilian E-Commerce dataset (PostgreSQL).
--- Column order matches the CSV headers so \copy can load them directly.
 
 CREATE TABLE customers (
   customer_id TEXT PRIMARY KEY,
