@@ -4,17 +4,7 @@
 --   B. Database access control (least privilege)
 --   C. Privacy: PII masking and a k-anonymity check
 -- Run in pgAdmin's Query Tool, section by section. Part B is safest to run in psql
--- (see the note on passwords).
 
-
--- =====================================================================
--- A. FRAUD / ANOMALY DETECTION
--- A flag means "review this order", not "this order is fraud".
--- =====================================================================
-
--- A1. Payment total does not match items + freight (difference > R$1).
---     Legitimate cause: credit-card installment interest. Other causes: refunds,
---     manipulated amounts, data errors.
 WITH items AS (
   SELECT order_id, SUM(price + freight_value) AS item_total
   FROM order_items GROUP BY 1
