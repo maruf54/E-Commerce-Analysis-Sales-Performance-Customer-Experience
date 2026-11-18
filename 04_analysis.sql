@@ -1,7 +1,6 @@
 -- 04_analysis.sql
 -- 10 business questions. Revenue = delivered orders only.
 
--- Q1. Total orders, revenue and average order value (AOV)
 SELECT COUNT(DISTINCT o.order_id) AS total_orders,
        ROUND(SUM(p.payment_value), 2) AS total_revenue,
        ROUND(SUM(p.payment_value) / COUNT(DISTINCT o.order_id), 2) AS avg_order_value
