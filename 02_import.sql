@@ -1,7 +1,6 @@
 -- 02_import.sql
 -- Run inside psql (NOT pgAdmin's Query Tool) — \copy is a psql client command.
---   macOS:  /Library/PostgreSQL/18/bin/psql -U postgres -d olist
--- Replace /path/to/olist/ with the folder where you unzipped the Kaggle dataset.
+
 
 \copy customers FROM '/path/to/olist/olist_customers_dataset.csv' WITH (FORMAT csv, HEADER true);
 \copy orders FROM '/path/to/olist/olist_orders_dataset.csv' WITH (FORMAT csv, HEADER true);
