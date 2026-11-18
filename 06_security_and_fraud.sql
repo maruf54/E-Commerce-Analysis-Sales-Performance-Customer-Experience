@@ -51,7 +51,7 @@ ORDER BY vouchers_used DESC
 LIMIT 20;
 
 -- A4. Burst ordering: the same customer places 3 orders within 24 hours
---     (possible account takeover or card testing).
+
 WITH o AS (
   SELECT c.customer_unique_id,
          o.order_id,
@@ -118,14 +118,6 @@ SELECT SUM(flag_amount_mismatch)  AS amount_mismatch,
 FROM v_order_risk_flags;
 
 
--- =====================================================================
--- B. ACCESS CONTROL: PRINCIPLE OF LEAST PRIVILEGE
--- The analyst role can read only the cleaned/masked views, never the raw tables.
--- The views run with their owner's rights, so they act as a security layer.
--- =====================================================================
-
--- Create the role without hard-coding a password in a file that goes to GitHub.
--- Then, in psql, set it interactively:   \password analyst_ro
 CREATE ROLE analyst_ro LOGIN;
 
 REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
@@ -134,7 +126,7 @@ REVOKE CREATE ON SCHEMA public FROM PUBLIC;
 GRANT CONNECT ON DATABASE olist TO analyst_ro;
 GRANT USAGE ON SCHEMA public TO analyst_ro;
 GRANT SELECT ON v_order_summary, v_category_sales TO analyst_ro;
--- (v_customers_masked is granted in part C.)
+
 
 -- Test it: switch to the analyst role and try both.
 SET ROLE analyst_ro;
@@ -142,14 +134,8 @@ SELECT COUNT(*) FROM v_order_summary;   -- works
 SELECT * FROM customers LIMIT 1;        -- expected: ERROR: permission denied for table customers
 RESET ROLE;
 
-
--- =====================================================================
 -- C. PRIVACY: PII MASKING + K-ANONYMITY
--- =====================================================================
 
--- C1. Masked customer view: a salted SHA-256 hash replaces the real customer ID,
---     and the zip code is generalized to 3 digits.
---     Change the salt string to your own secret value.
 CREATE OR REPLACE VIEW v_customers_masked AS
 SELECT encode(sha256((customer_unique_id || 'change-this-salt')::bytea), 'hex') AS customer_hash,
        LEFT(customer_zip_code_prefix, 3) || 'XX' AS zip_masked,
@@ -162,8 +148,6 @@ GRANT SELECT ON v_customers_masked TO analyst_ro;
 SELECT * FROM v_customers_masked LIMIT 5;
 
 -- C2. k-anonymity check (k = 5): city + state groups with fewer than 5 customers.
---     In those small groups a person could be re-identified, so report them at
---     state level only.
 SELECT customer_city, customer_state,
        COUNT(DISTINCT customer_unique_id) AS customers
 FROM customers
