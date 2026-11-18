@@ -1,7 +1,4 @@
 -- 05_views_for_powerbi.sql
--- Two clean reporting views. Payments and reviews are aggregated to one row per
--- order BEFORE joining, to avoid fan-out (double counting) when an order has
--- several payments or reviews.
 
 -- Grain: one row per order
 CREATE VIEW v_order_summary AS
