@@ -3,7 +3,6 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-18-336791?logo=postgresql&logoColor=white)
 ![SQL](https://img.shields.io/badge/SQL-CTEs%20%7C%20Window%20Functions-blue)
 ![Power BI](https://img.shields.io/badge/Power%20BI-DAX%20%7C%20Data%20Modeling-F2C811?logo=powerbi&logoColor=black)
-![Security](https://img.shields.io/badge/Security-Fraud%20Detection%20%7C%20Least%20Privilege%20%7C%20PII%20Masking-critical)
 ![Status](https://img.shields.io/badge/Status-Complete-success)
 
 ![Power BI KPI cards](images/powerbi_kpi_cards.png)
@@ -14,9 +13,7 @@
 This project analyzes **~100,000 orders** from Olist, a Brazilian e-commerce marketplace
 (2016–2018), to understand what drives revenue and customer satisfaction. I modeled the
 raw data in **PostgreSQL**, answered ten business questions with **SQL**, and built an
-interactive **Power BI** dashboard on top of a validated reporting layer. I also applied a
-**security lens**: rule-based fraud and anomaly detection, least-privilege database access,
-and privacy protection through PII masking and a k-anonymity check.
+interactive **Power BI** dashboard on top of a validated reporting layer.
 
 **Headline finding:** late deliveries are the main driver of poor customer satisfaction.
 Orders delivered late average **2.57★**, compared with **4.29★** for on-time orders, which is
@@ -31,10 +28,9 @@ reliability and customer retention as the two highest-impact areas for improveme
 3. [Tools & Skills](#tools--skills)
 4. [Methodology](#methodology)
 5. [Key Results](#key-results)
-6. [Security & Fraud Analysis](#security--fraud-analysis)
-7. [Recommendations](#recommendations)
-8. [Dashboard](#dashboard)
-9. [Limitations](#limitations)
+6. [Recommendations](#recommendations)
+7. [Dashboard](#dashboard)
+8. [Limitations](#limitations)
 
 ---
 
@@ -78,7 +74,6 @@ erDiagram
 | Data quality | Null and duplicate checks, grain definition, fan-out prevention |
 | BI & modeling | Power BI, star schema, date table, DAX (`CALCULATE`, `DIVIDE`, `DATEADD`, variables) |
 | Validation | Reconciled dashboard KPIs against SQL outputs |
-| Security | Rule-based fraud & anomaly detection (z-score, mismatch, velocity checks), PostgreSQL roles and grants (least privilege), salted SHA-256 PII masking, k-anonymity, Power BI row-level security |
 
 ---
 
@@ -92,7 +87,6 @@ flowchart LR
     C --> E[Reporting views<br/>2 clean views]
     E --> F[Power BI<br/>model + DAX]
     D -.validates.-> F
-    E --> G[Security layer<br/>risk flags · roles · masking]
 ```
 
 ### 1. Data ingestion: [`01_create_tables.sql`](sql/01_create_tables.sql), [`02_import.sql`](sql/02_import.sql)
@@ -319,103 +313,6 @@ LIMIT 10;
 
 ---
 
-## Security & Fraud Analysis
-
-Analytics data is also an attack surface. It holds payment records, customer
-identifiers and location data. I added three security controls on top of the analysis.
-The full code is in [`06_security_and_fraud.sql`](sql/06_security_and_fraud.sql).
-
-### A. Fraud & anomaly detection
-
-I built rule-based checks that flag orders for review, the same first-line approach a SOC or
-fraud team uses before applying ML models. All flags are combined in one reporting view,
-`v_order_risk_flags`, with a simple risk score.
-
-| Check | Rule | What it can indicate |
-|---|---|---|
-| Amount mismatch | Payment total ≠ items + freight (difference > R$1) | Manipulated amounts, refunds, or installment interest |
-| High-value outlier | Order value > mean + 3σ (z-score) | Unusual purchases worth manual review |
-| Voucher stacking | 5+ vouchers on one order | Promotion abuse |
-| Burst ordering | 3 orders by one customer within 24 hours | Card testing or account takeover |
-| Odd payment | Zero-value or `not_defined` payment type | Data tampering or integration errors |
-
-<details>
-<summary>View SQL: risk-flag view</summary>
-
-```sql
-CREATE OR REPLACE VIEW v_order_risk_flags AS
-WITH items AS (
-  SELECT order_id, SUM(price + freight_value) AS item_total
-  FROM order_items GROUP BY 1
-),
-pay AS (
-  SELECT order_id,
-         SUM(payment_value) AS paid,
-         SUM(CASE WHEN payment_type = 'voucher' THEN 1 ELSE 0 END) AS n_vouchers,
-         BOOL_OR(payment_type = 'not_defined' OR payment_value = 0) AS odd_payment
-  FROM payments GROUP BY 1
-),
-stats AS (SELECT AVG(paid) AS mu, STDDEV(paid) AS sd FROM pay),
-flags AS (
-  SELECT p.order_id, p.paid, i.item_total,
-         CASE WHEN i.item_total IS NOT NULL
-               AND ABS(p.paid - i.item_total) > 1 THEN 1 ELSE 0 END AS flag_amount_mismatch,
-         CASE WHEN p.paid > s.mu + 3 * s.sd THEN 1 ELSE 0 END      AS flag_high_value,
-         CASE WHEN p.n_vouchers >= 5 THEN 1 ELSE 0 END             AS flag_voucher_stacking,
-         CASE WHEN p.odd_payment THEN 1 ELSE 0 END                 AS flag_odd_payment
-  FROM pay p
-  LEFT JOIN items i ON i.order_id = p.order_id
-  CROSS JOIN stats s
-)
-SELECT *, flag_amount_mismatch + flag_high_value
-        + flag_voucher_stacking + flag_odd_payment AS risk_score
-FROM flags;
-```
-</details>
-
-### B. Access control: least privilege
-
-I created a read-only `analyst_ro` role. It can query only the cleaned and masked views,
-**not** the raw tables. The views run with their owner's rights, so they act as a controlled
-access layer. The role's password is set interactively (`\password`) and never stored in code.
-
-```sql
-CREATE ROLE analyst_ro LOGIN;
-REVOKE ALL ON ALL TABLES IN SCHEMA public FROM PUBLIC;
-GRANT CONNECT ON DATABASE olist TO analyst_ro;
-GRANT USAGE ON SCHEMA public TO analyst_ro;
-GRANT SELECT ON v_order_summary, v_category_sales, v_customers_masked TO analyst_ro;
-
-SET ROLE analyst_ro;
-SELECT COUNT(*) FROM v_order_summary;   -- allowed
-SELECT * FROM customers LIMIT 1;        -- ERROR: permission denied
-RESET ROLE;
-```
-
-### C. Privacy: PII masking & k-anonymity
-
-- **Pseudonymization:** customer IDs are replaced by a **salted SHA-256 hash**, and zip codes
-  are generalized to three digits (`v_customers_masked`).
-- **Re-identification risk:** a k-anonymity check (k = 5) finds city–state groups with fewer
-  than five customers. In those groups an individual could be identified, so they are
-  reported at state level only.
-
-```sql
-CREATE OR REPLACE VIEW v_customers_masked AS
-SELECT encode(sha256((customer_unique_id || 'change-this-salt')::bytea), 'hex') AS customer_hash,
-       LEFT(customer_zip_code_prefix, 3) || 'XX' AS zip_masked,
-       customer_city,
-       customer_state
-FROM customers;
-```
-
-### D. Row-level security in Power BI
-
-Role-based filters restrict each viewer to their own region. For example, a São Paulo manager
-sees only `customer_state = "SP"`. Setup steps are in [`dax_measures.md`](powerbi/dax_measures.md#row-level-security-rls).
-
----
-
 ## Recommendations
 
 | Priority | Recommendation | Expected impact |
@@ -425,7 +322,6 @@ sees only `customer_state = "SP"`. Setup steps are in [`dax_measures.md`](powerb
 | Medium | Volume promotions for bed_bath_table; premium positioning for watches_gifts | Category-specific revenue growth |
 | Medium | Schedule campaigns for Mon–Tue afternoons and Monday evenings | Better marketing ROI |
 | Low | Keep credit-card checkout fast; keep boleto available | Protect conversion |
-| **High** | Route orders with a risk score ≥ 2 to manual review; give analysts masked, read-only access by default | Lower fraud loss and data-exposure risk |
 
 ---
 
@@ -442,7 +338,6 @@ The Power BI report ([`olist_dashboard.pbix`](powerbi/olist_dashboard.pbix)) has
 
 ## Limitations
 
-- Fraud checks are **rule-based** and the dataset has no confirmed fraud labels, so flags show where to review, not proven fraud. A supervised model would need labeled data.
 - The delivery–review relationship is **correlational**. A controlled test would be needed to confirm causation.
 - Data ends in 2018, and edge months are incomplete.
 - Revenue is based on payment value, which includes freight. Category revenue uses item price only, so the two totals differ by design.
